@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 The Android Open Source Project
+ * Copyright (C) 2008 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,43 +26,23 @@
  * SUCH DAMAGE.
  */
 
-#include "../../bionic/libc_init_common.h"
-#include <stddef.h>
-#include <stdint.h>
+// Prototype: void *memcpy (void *dst, const void *src, size_t count).
 
-#define SECTION(name) __attribute__((__section__(name)))
-SECTION(".preinit_array") void (*__PREINIT_ARRAY__)(void) = (void (*)(void)) -1;
-SECTION(".init_array") void (*__INIT_ARRAY__)(void) = (void (*)(void)) -1;
-SECTION(".fini_array") void (*__FINI_ARRAY__)(void) = (void (*)(void)) -1;
-#undef SECTION
+#include <private/bionic_asm.h>
 
-static void _start_main(void* raw_args) __used {
-  structors_array_t array;
-  array.preinit_array = &__PREINIT_ARRAY__;
-  array.init_array = &__INIT_ARRAY__;
-  array.fini_array = &__FINI_ARRAY__;
+ENTRY(__memcpy_chk)
+  cmp x2, x3
+  bls memcpy
 
-  __libc_init(raw_args, NULL, &main, &array);
-}
+  // Preserve for accurate backtrace.
+  stp x29, x30, [sp, -16]!
+  .cfi_def_cfa_offset 16
+  .cfi_rel_offset x29, 0
+  .cfi_rel_offset x30, 8
 
-#define PRE ".text; .global _start; .type _start,%function; _start:"
-#define POST "; .size _start, .-_start"
+  bl __memcpy_chk_fail
+END(__memcpy_chk)
 
-#if defined(__aarch64__)
-__asm__(PRE "mov x0,sp; b _start_main" POST);
-#elif defined(__arm__)
-__asm__(PRE "mov r0,sp; b _start_main" POST);
-#elif defined(__i386__)
-__asm__(PRE "movl %esp,%eax; andl $~0xf,%esp; pushl %eax; calll _start_main" POST);
-#elif defined(__x86_64__)
-__asm__(PRE "movq %rsp,%rdi; andq $~0xf,%rsp; callq _start_main" POST);
-#else
-#error unsupported architecture
-#endif
-
-#undef PRE
-#undef POST
-
-#include "__dso_handle.h"
-#include "atexit.h"
-#include "pthread_atfork.h"
+ENTRY(memcpy)
+  #include "memcpy_base.S"
+END(memcpy)

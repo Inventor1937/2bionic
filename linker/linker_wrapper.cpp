@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 The Android Open Source Project
+ * Copyright (C) 2017 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,43 +26,34 @@
  * SUCH DAMAGE.
  */
 
-#include "../../bionic/libc_init_common.h"
-#include <stddef.h>
-#include <stdint.h>
+#include "private/KernelArgumentBlock.h"
 
-#define SECTION(name) __attribute__((__section__(name)))
-SECTION(".preinit_array") void (*__PREINIT_ARRAY__)(void) = (void (*)(void)) -1;
-SECTION(".init_array") void (*__INIT_ARRAY__)(void) = (void (*)(void)) -1;
-SECTION(".fini_array") void (*__FINI_ARRAY__)(void) = (void (*)(void)) -1;
-#undef SECTION
+extern const char linker_code_start;
+extern const char original_start;
+extern const char linker_entry;
 
-static void _start_main(void* raw_args) __used {
-  structors_array_t array;
-  array.preinit_array = &__PREINIT_ARRAY__;
-  array.init_array = &__INIT_ARRAY__;
-  array.fini_array = &__FINI_ARRAY__;
+/*
+ * This is the entry point for the linker wrapper, which finds
+ * the real linker, then bootstraps into it.
+ */
+extern "C" ElfW(Addr) __linker_init(void* raw_args) {
+  KernelArgumentBlock args(raw_args);
 
-  __libc_init(raw_args, NULL, &main, &array);
+  static uintptr_t linker_offset = reinterpret_cast<uintptr_t>(&linker_code_start);
+  static uintptr_t linktime_addr = reinterpret_cast<uintptr_t>(&linktime_addr);
+  ElfW(Addr) my_addr = reinterpret_cast<uintptr_t>(&linktime_addr) - linktime_addr;
+
+  // Set AT_ENTRY to the proper entry point
+  for (ElfW(auxv_t)* v = args.auxv; v->a_type != AT_NULL; ++v) {
+    if (v->a_type == AT_BASE) {
+      v->a_un.a_val = my_addr + linker_offset;
+    }
+    if (v->a_type == AT_ENTRY) {
+      v->a_un.a_val = my_addr + reinterpret_cast<uintptr_t>(&original_start);
+    }
+  }
+
+  // Return address of linker entry point -- may need to ensure that raw_args
+  // was saved.
+  return my_addr + linker_offset + reinterpret_cast<uintptr_t>(&linker_entry);
 }
-
-#define PRE ".text; .global _start; .type _start,%function; _start:"
-#define POST "; .size _start, .-_start"
-
-#if defined(__aarch64__)
-__asm__(PRE "mov x0,sp; b _start_main" POST);
-#elif defined(__arm__)
-__asm__(PRE "mov r0,sp; b _start_main" POST);
-#elif defined(__i386__)
-__asm__(PRE "movl %esp,%eax; andl $~0xf,%esp; pushl %eax; calll _start_main" POST);
-#elif defined(__x86_64__)
-__asm__(PRE "movq %rsp,%rdi; andq $~0xf,%rsp; callq _start_main" POST);
-#else
-#error unsupported architecture
-#endif
-
-#undef PRE
-#undef POST
-
-#include "__dso_handle.h"
-#include "atexit.h"
-#include "pthread_atfork.h"
